@@ -32,8 +32,6 @@ const filterExt = new Map();
 let duplicateFilenamesSet = null;
 // 当前所在页面
 let activeTab = true;
-// 储存下载id
-const downData = [];
 // 图标地址
 const favicon = new Map();
 // 当前页面DOM
@@ -42,15 +40,6 @@ let pageDOM = undefined;
 chrome.runtime.sendMessage(chrome.runtime.id, { Message: "HeartBeat" });
 // 清理冗余数据
 chrome.runtime.sendMessage(chrome.runtime.id, { Message: "clearRedundant" });
-// 监听下载 出现服务器拒绝错误 调用下载器
-chrome.downloads.onChanged.addListener(function (item) {
-  if (G.catDownload) { delete downData[item.id]; return; }
-  const errorList = ["SERVER_BAD_CONTENT", "SERVER_UNAUTHORIZED", "SERVER_FORBIDDEN", "SERVER_UNREACHABLE", "SERVER_CROSS_ORIGIN_REDIRECT", "SERVER_FAILED", "NETWORK_FAILED"];
-  if (item.error && errorList.includes(item.error.current) && downData[item.id]) {
-    catDownload(downData[item.id]);
-    delete downData[item.id];
-  }
-});
 // 复选框状态 点击返回或者全选后 影响新加入的资源 复选框勾选状态
 let checkboxState = true;
 
@@ -124,7 +113,6 @@ function AddMedia(data, currentTab = true) {
                 </div>
                 <div class="moreButton">
                     <div id="qrcode"><img src="img/qrcode.png" class="icon qrcode" title="QR Code"/></div>
-                    <div id="catDown"><img src="img/cat-down.png" class="icon cat-down" title="${i18n.downloadWithRequestHeader}"/></div>
                     <div id="catDownFFmpeg"><img src="img/send2ffmpeg.svg" class="icon send2ffmpeg" title="${i18n.sendFfmpeg}"/></div>
                     <div><img src="img/invoke.svg" class="icon invoke" title="${i18n.invoke}"/></div>
                 </div>
@@ -243,10 +231,6 @@ function AddMedia(data, currentTab = true) {
     const size = data.url.length >= 300 ? 400 : 256;
     $(this).html("").qrcode({ width: size, height: size, text: data.url }).off("click");
   });
-  // 猫抓下载器 下载
-  data.html.find("#catDown").click(function () {
-    catDownload(data);
-  });
   data.html.find("#catDownFFmpeg").click(function () {
     catDownload(data, { ffmpeg: "addFile" });
   });
@@ -316,11 +300,15 @@ function AddMedia(data, currentTab = true) {
       openParser(data, { autoDown: true });
       return false;
     }
-    chrome.downloads.download({
-      url: data.url,
-      filename: data.downFileName,
-      saveAs: G.saveAs
-    }, function (id) { downData[id] = data; });
+    if (G.catDownload) {
+      chrome.downloads.download({
+        url: data.url,
+        filename: data.downFileName,
+        saveAs: G.saveAs
+      });
+    } else {
+      catDownload(data);
+    }
     return false;
   });
   // 调用
@@ -547,7 +535,7 @@ $('#DownFile').click(function () {
     });
     return;
   }
-  let index = 0;
+  const downloadData = [];
   for (let data of checkedData) {
     if (G.m3u8dl && (data.parsing == "m3u8" || data.parsing == "mpd") && !data.url.startsWith("blob:")) {
       const m3u8dlArg = templates(G.m3u8dlArg, data);
@@ -559,17 +547,15 @@ $('#DownFile').click(function () {
       openParser(data, { autoDown: true, autoClose: true });
       continue;
     }
-    // 以防止popup页面被关闭 丢失下载数据 批量下载前临时修改为 后台下载
-    G.downActive = true;
-
-    index++;
-    setTimeout(function () {
-      chrome.downloads.download({
-        url: data.url,
-        filename: data.downFileName
-      }, function (id) { downData[id] = data; });
-    }, index * 100);
+    downloadData.push(data);
   };
+  if (G.catDownload) {
+    downloadData.forEach(function (data) {
+      chrome.downloads.download({ url: data.url, filename: data.downFileName });
+    });
+  } else if (downloadData.length) {
+    catDownload(downloadData);
+  }
 });
 // 合并下载
 $mergeDown.click(function () {
